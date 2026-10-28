@@ -87,15 +87,22 @@ def discover_from_sorts():
 def discover_from_search():
     """Recherche par mots-clés (best effort : si l'endpoint change, on continue sans)."""
     found = {}
-    fails = 0
+    fails = 0          # échecs consécutifs
+    started = time.time()
     for kw in C.SEARCH_KEYWORDS:
-        d = get(SEARCH, {"searchQuery": kw, "sessionId": SESSION_ID, "pageType": "all"}, tries=3)
+        if fails >= 3:
+            log("Recherche limitée par Roblox (429), on arrête là pour aujourd'hui.")
+            break
+        if time.time() - started > 360:
+            log("Recherche : budget de 6 min atteint, on arrête.")
+            break
+        time.sleep(4)  # Roblox limite fortement l'endpoint de recherche
+        d = get(SEARCH, {"searchQuery": kw, "sessionId": SESSION_ID, "pageType": "all"}, tries=2)
         if not d:
             fails += 1
-            if fails >= 3 and not found:
-                log("Recherche par mots-clés indisponible, on continue sans.")
-                return found
+            time.sleep(15)
             continue
+        fails = 0
         n = 0
         for grp in d.get("searchResults", []):
             for c in grp.get("contents", []):

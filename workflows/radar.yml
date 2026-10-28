@@ -1,0 +1,45 @@
+name: Roblox Radar
+
+on:
+  schedule:
+    - cron: "17 17 * * *"   # tous les jours ~18h/19h heure française (pic EU + US)
+  workflow_dispatch:         # bouton "Run workflow" pour lancer à la main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Collecte des stats Roblox
+        run: python src/collect.py
+
+      - name: Analyse + génération du dashboard
+        run: python src/analyze.py
+
+      - name: Commit des nouvelles données
+        run: |
+          git config user.name "roblox-radar-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data docs
+          if git diff --cached --quiet; then
+            echo "Rien de nouveau."
+          else
+            git commit -m "radar: snapshot $(date -u +%F)"
+            git push
+          fi

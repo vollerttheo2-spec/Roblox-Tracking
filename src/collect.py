@@ -48,9 +48,19 @@ def get(url, params=None, tries=6):
             log(f"  ! HTTP {r.status_code} sur {url.split('/')[-1]}, pause {wait:.0f}s")
             time.sleep(wait)
             continue
-        log(f"  ! HTTP {r.status_code} sur {url} (abandon)")
+        global _body_logs
+        if _body_logs < 4:
+            _body_logs += 1
+            log(f"  ! HTTP {r.status_code} sur {r.url[:160]}")
+            log(f"    réponse Roblox : {r.text[:300]}")
+        else:
+            log(f"  ! HTTP {r.status_code} sur {url.split('/')[-1]} (abandon)")
         return None
     return None
+
+
+_body_logs = 0
+EXPLORE_INFO = {}  # universeId -> infos déjà reçues dans les listes (repli si l'API de détails échoue)
 
 
 # ---------------------------------------------------------------- découverte
@@ -76,6 +86,11 @@ def discover_from_sorts():
                 uid = g.get("universeId")
                 if uid:
                     found.setdefault(int(uid), set()).add(label)
+                    EXPLORE_INFO[int(uid)] = {
+                        "name": g.get("name"), "place": g.get("rootPlaceId"),
+                        "playing": g.get("playerCount"),
+                        "up": g.get("totalUpVotes"), "down": g.get("totalDownVotes"),
+                    }
                     n += 1
             cursor = d.get("nextPageCursor")
             if not cursor:
@@ -122,19 +137,28 @@ def chunks(lst, n):
 
 def fetch_details(ids):
     """Stats détaillées (joueurs, visites, favoris, date de création...) par lots de 100."""
+    return fetch_list("games", ids), fetch_list("games/votes", ids)
+
+
+def fetch_list(path, ids):
+    """GET /v1/<path>?universeIds=... par lots de 100. Si un lot est refusé (400),
+    on le redécoupe en lots de 20 puis de 4 pour isoler le problème."""
     out = {}
+
+    def attempt(batch, sizes):
+        d = get(f"{GAMES_API}/{path}", {"universeIds": ",".join(map(str, batch))}, tries=3)
+        if d is not None:
+            for g in d.get("data", []):
+                out[g["id"]] = g
+            return
+        if len(batch) > 1 and sizes:
+            for sub in chunks(batch, sizes[0]):
+                attempt(sub, sizes[1:])
+
     for batch in chunks(ids, 100):
-        q = {"universeIds": ",".join(map(str, batch))}
-        d = get(f"{GAMES_API}/games", q)
-        for g in (d or {}).get("data", []):
-            out[g["id"]] = g
-    votes = {}
-    for batch in chunks(ids, 100):
-        q = {"universeIds": ",".join(map(str, batch))}
-        d = get(f"{GAMES_API}/games/votes", q)
-        for v in (d or {}).get("data", []):
-            votes[v["id"]] = v
-    return out, votes
+        attempt(batch, [20, 4])
+    log(f"  /{path} : {len(out)}/{len(ids)} jeux renvoyés")
+    return out
 
 
 # --------------------------------------------------------------------- main
@@ -171,15 +195,24 @@ def main():
 
     details, votes = fetch_details(ids)
     if not details:
-        log("ERREUR : l'API de détails n'a rien renvoyé.")
-        sys.exit(1)
+        if not EXPLORE_INFO:
+            log("ERREUR : l'API de détails n'a rien renvoyé et aucune donnée de repli.")
+            sys.exit(1)
+        log("ATTENTION : API de détails indisponible. Mode dégradé : joueurs, likes et noms "
+            "viennent des listes Découvrir ; visites, favoris et âge des jeux seront vides.")
 
     rows = []
     for uid in ids:
         g = details.get(uid)
-        if not g:
-            continue
         v = votes.get(uid, {})
+        if not g:
+            info = EXPLORE_INFO.get(uid)
+            if not info:
+                continue
+            g = {"name": info.get("name") or "?", "rootPlaceId": info.get("place"),
+                 "playing": info.get("playing")}
+            if not v:
+                v = {"upVotes": info.get("up"), "downVotes": info.get("down")}
         playing = int(g.get("playing") or 0)
         meta = games.setdefault(str(uid), {"first_seen": today})
         meta.update({

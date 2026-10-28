@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roblox Radar</title>
+<style>
+:root{
+  --bg:#f6f5f1; --card:#ffffff; --ink:#1b1b1f; --muted:#6b6b76; --line:#e4e2da;
+  --accent:#0d6b57; --accent-soft:#dcefe9; --up:#0d7a3f; --down:#b3261e; --chip:#eeece5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121316; --card:#1b1c21; --ink:#ececef; --muted:#9a9aa6; --line:#2b2c33;
+    --accent:#4fd1b0; --accent-soft:#17332d; --up:#5fd38d; --down:#ff8a80; --chip:#25262d;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121316; --card:#1b1c21; --ink:#ececef; --muted:#9a9aa6; --line:#2b2c33;
+  --accent:#4fd1b0; --accent-soft:#17332d; --up:#5fd38d; --down:#ff8a80; --chip:#25262d;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+h1{font-size:22px;margin:0;letter-spacing:-.01em}
+.meta{color:var(--muted);font-size:13px}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px}
+.tab{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:999px;font:inherit;font-size:14px;cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .tab[aria-selected="true"]{color:#06231c}}
+.help{background:var(--accent-soft);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:14px}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.controls input,.controls select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;min-width:0}
+.controls input{flex:1 1 200px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:9px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{position:sticky;top:0;background:var(--card);color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none}
+th.sorted{color:var(--accent)}
+tr:last-child td{border-bottom:0}
+td.name{white-space:normal;min-width:200px;max-width:340px}
+td.name a{color:var(--ink);text-decoration:none;font-weight:600}
+td.name a:hover{color:var(--accent);text-decoration:underline}
+.sub{color:var(--muted);font-size:12px;font-weight:400}
+.chip{display:inline-block;background:var(--chip);border-radius:6px;padding:1px 7px;font-size:11px;margin:2px 3px 0 0;color:var(--muted)}
+.up{color:var(--up);font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+.empty{padding:36px 16px;text-align:center;color:var(--muted)}
+.count{color:var(--muted);font-size:13px;margin:0 0 8px}
+@media (max-width:640px){th,td{padding:8px 9px}.wrap{padding:14px 12px 50px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Roblox Radar</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="help" id="help"></div>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Rechercher un jeu ou un créateur…">
+    <select id="genre"><option value="">Tous les genres</option></select>
+    <select id="tag"><option value="">Tous les concepts</option></select>
+  </div>
+  <p class="count" id="count"></p>
+  <div class="box"><table id="tbl"></table></div>
+</div>
+
+<script>
+const D = __DATA__;
+const fmt = n => n==null ? "–" : Number(n).toLocaleString("fr-FR");
+const pctf = n => n==null ? "–" : (n*100).toFixed(0)+" %";
+const compact = n => n==null ? "–" : (n>=1e9 ? (n/1e9).toFixed(1)+" Md" : n>=1e6 ? (n/1e6).toFixed(1)+" M" : n>=1e3 ? (n/1e3).toFixed(1)+" k" : String(Math.round(n)));
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const TABS = {
+  top:    {label:"Top performance", help:"Les jeux avec le plus de joueurs actifs maintenant. Pour savoir ce qui domine le marché."},
+  gems:   {label:"Pépites cachées", help:"Très bien notés (like ratio solide, beaucoup de favoris) mais pas encore énormes. Ce sont des concepts qui plaisent sans être saturés."},
+  new:    {label:"Nouveaux à potentiel", help:"Jeux de moins de "+(60)+" jours qui ont déjà des joueurs et de bons avis. Triés par visites/jour depuis leur création."},
+  rising: {label:"En hausse", help:"Jeux dont les joueurs actifs montent le plus par rapport à la moyenne des jours précédents. Demande au moins 2 jours de données."},
+  niches: {label:"Concepts / niches", help:"Quels types de jeux marchent ? Part >100 joueurs = part des jeux récents (< 60 j) qui dépassent 100 joueurs. Attention : on ne voit que les jeux mis en avant par Roblox, donc ce taux est gonflé (biais de survie). Compare les niches entre elles, ne le prends pas comme une probabilité de réussite."},
+};
+const COLS = {
+  name:{l:"Jeu"}, playing:{l:"Joueurs"}, growth:{l:"Hausse"}, visits_day:{l:"Visites/j"},
+  visits:{l:"Visites"}, favorites:{l:"Favoris"}, like_ratio:{l:"Likes"}, votes:{l:"Votes"}, age_days:{l:"Âge (j)"}, score:{l:"Score"},
+};
+const TAB_COLS = {
+  top:["name","playing","visits","favorites","like_ratio","age_days"],
+  gems:["name","score","playing","like_ratio","votes","favorites","visits","age_days"],
+  new:["name","score","playing","visits","like_ratio","age_days"],
+  rising:["name","growth","playing","visits_day","like_ratio","age_days"],
+};
+let cur = "top", sortKey = null, sortDir = -1;
+
+function el(id){return document.getElementById(id)}
+el("meta").textContent = `Données du ${D.date} · ${fmt(D.tracked)} jeux suivis · ${D.snapshots} snapshot(s) · ${compact(D.total_ccu)} joueurs au total`;
+for (const g of D.genres) el("genre").insertAdjacentHTML("beforeend",`<option>${esc(g)}</option>`);
+for (const t of D.tag_names) el("tag").insertAdjacentHTML("beforeend",`<option>${esc(t)}</option>`);
+
+const tabs = el("tabs");
+for (const [k,v] of Object.entries(TABS)){
+  const b = document.createElement("button");
+  b.className="tab"; b.role="tab"; b.textContent=v.label; b.dataset.k=k;
+  b.onclick=()=>{cur=k; sortKey=null; sortDir=-1; render()};
+  tabs.appendChild(b);
+}
+
+function cell(r,k){
+  switch(k){
+    case "name": {
+      const url = r.place ? `https://www.roblox.com/games/${r.place}` : `https://www.roblox.com/search/games?keyword=${encodeURIComponent(r.name)}`;
+      const chips = (r.tags||[]).map(t=>`<span class="chip">${esc(t)}</span>`).join("");
+      return `<td class="name"><a href="${url}" target="_blank" rel="noopener">${esc(r.name)}</a><div class="sub">${esc(r.creator||"")}${r.genre?" · "+esc(r.genre):""}</div>${chips}</td>`;
+    }
+    case "playing": return `<td class="num">${fmt(r.playing)}</td>`;
+    case "visits": return `<td class="num">${compact(r.visits)}</td>`;
+    case "favorites": return `<td class="num">${compact(r.favorites)}</td>`;
+    case "like_ratio": return `<td class="num">${pctf(r.like_ratio)}</td>`;
+    case "votes": return `<td class="num">${fmt(r.votes)}</td>`;
+    case "age_days": return `<td class="num">${r.age_days==null?"–":fmt(r.age_days)}</td>`;
+    case "growth": return `<td class="num up">${r.growth==null?"–":"+"+Math.round(r.growth*100)+" %"}${r.base_ccu!=null?`<div class="sub">avant : ${fmt(Math.round(r.base_ccu))}</div>`:""}</td>`;
+    case "visits_day": return `<td class="num">${r.visits_day==null?"–":compact(r.visits_day)}</td>`;
+    case "score": return `<td class="num">${r.score==null?"–":Math.round(r.score)}</td>`;
+  }
+  return "<td></td>";
+}
+
+function render(){
+  for (const b of tabs.children) b.setAttribute("aria-selected", b.dataset.k===cur);
+  el("help").textContent = TABS[cur].help;
+  const tbl = el("tbl"), isN = cur==="niches";
+  document.querySelector(".controls").style.display = isN ? "none" : "";
+  if (isN) return renderNiches();
+  const q = el("q").value.trim().toLowerCase(), g = el("genre").value, t = el("tag").value;
+  let rows = (D.lists[cur]||[]).filter(r =>
+    (!q || (r.name||"").toLowerCase().includes(q) || (r.creator||"").toLowerCase().includes(q)) &&
+    (!g || r.genre===g) && (!t || (r.tags||[]).includes(t)));
+  if (sortKey) rows = [...rows].sort((a,b)=>{
+    const x=a[sortKey], y=b[sortKey];
+    if (sortKey==="name") return sortDir*String(x).localeCompare(String(y));
+    return sortDir*((x??-Infinity)-(y??-Infinity));
+  });
+  el("count").textContent = rows.length + " jeu(x)";
+  if (!rows.length){
+    const why = cur==="rising" && D.snapshots<2 ? "Pas encore assez de données : il faut au moins 2 jours de snapshots." : "Aucun jeu ne correspond.";
+    tbl.innerHTML = `<tbody><tr><td class="empty" colspan="9">${why}</td></tr></tbody>`; return;
+  }
+  const cols = TAB_COLS[cur];
+  const defKey = cols[1];
+  tbl.innerHTML = "<thead><tr>"+cols.map(c=>`<th data-k="${c}" class="${(sortKey||defKey)===c?"sorted":""}">${COLS[c].l}${(sortKey||defKey)===c?(sortDir<0?" ↓":" ↑"):""}</th>`).join("")+"</tr></thead><tbody>"+
+    rows.map(r=>"<tr>"+cols.map(c=>cell(r,c)).join("")+"</tr>").join("")+"</tbody>";
+  tbl.querySelectorAll("th").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if (sortKey===k) sortDir*=-1; else {sortKey=k; sortDir=k==="name"?1:-1} render();
+  });
+}
+
+function renderNiches(){
+  const rows = D.niches;
+  el("count").textContent = rows.length + " concept(s)";
+  const head = ["Concept","Jeux","Joueurs total","Médiane","Joueurs/jeu","Likes moy.","Nouveaux (<60 j)","Nouveaux >100 joueurs","Part >100 joueurs"];
+  el("tbl").innerHTML = "<thead><tr>"+head.map(h=>`<th>${h}</th>`).join("")+"</tr></thead><tbody>"+
+    rows.map(r=>`<tr><td class="name"><b>${esc(r.tag)}</b></td><td class="num">${fmt(r.games)}</td><td class="num">${compact(r.total_ccu)}</td><td class="num">${fmt(r.median_ccu)}</td><td class="num">${fmt(r.ccu_per_game)}</td><td class="num">${r.like==null?"–":r.like+" %"}</td><td class="num">${fmt(r.new_games)}</td><td class="num">${fmt(r.new_winners)}</td><td class="num ${r.win_rate>=15?"up":""}">${r.win_rate==null?"–":r.win_rate+" %"}</td></tr>`).join("")+"</tbody>";
+}
+["q","genre","tag"].forEach(id=>el(id).addEventListener("input",render));
+render();
+</script>
+</body>
+</html>
